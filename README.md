@@ -1,0 +1,2 @@
+# paginator
+Discord bot paginator
