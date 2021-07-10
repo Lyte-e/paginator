@@ -1,27 +1,16 @@
-from typing import Union, Optional
 from asyncio import TimeoutError
+from typing import Dict, Optional, Union
 
+from discord import Embed, Member, Message, Reaction, User, errors
 from discord.embeds import _EmptyEmbed
-from discord.ext.commands import (
-    AutoShardedBot,
-    Bot, 
-    Context
-)
-from discord import (
-    Reaction, 
-    Member, 
-    User, 
-    Message, 
-    Embed,
-    errors
-)
+from discord.ext.commands import AutoShardedBot, Bot, Context
 
 
 class _PaginatorBase:
     """Базовый класс Paginator.
     
-    Для корректной работы данного класса, надо переопределить методы, 
-    прописанные ниже.
+    Для корректной работы данного класса, переопределите 
+    метод `generate_embed`
 
     Attributes
     ----------
@@ -30,6 +19,8 @@ class _PaginatorBase:
         `top`, `previous`, `stop`, `next`, `end`
     pages: :class:`dict`
         Список страниц.
+    category: :class:`int`
+        Текущая категория.
     current: :class:`int`
         Текущая страница.
 
@@ -70,7 +61,6 @@ class _PaginatorBase:
         Привязывает Paginator к конкретному сообщению, либо отправляет новое.
     await pagination(emoji)
         Отвечает за действие, при нажатии реакции под сообщением.
-        Для переопределения.
     await generate_embed()
         Генерирует и возвращает Embed в зависимости от текущей страницы
         и предпочтений.
@@ -93,7 +83,9 @@ class _PaginatorBase:
         self.message: Optional[Message] = kwargs.get("message", None)
 
         self.pages = dict()
+        self.category = 0
         self.current = 0
+        self.is_active = False
         
     def __repr__(self) -> str:
         f = "<{0.__class__.__name__} count: {0._count} current: {0.current}"
@@ -148,11 +140,12 @@ class _PaginatorBase:
         
         Основной метод класса.
         """
+        self.is_active = True
         message = await self.paginate_message()
         if not message:
             return
 
-        while True:
+        while self.is_active:
             try:
                 reaction, user = await self.bot.wait_for(
                     "reaction_add", 
@@ -172,7 +165,9 @@ class _PaginatorBase:
         """|coro|
         
         Останавливает Paginator и выполняет действие, в зависимости от 
-        параметра `delete_message`."""
+        параметра `delete_message`.
+        """
+        self.is_active = False
         if self.message:
             try:
                 if self.delete_message:
@@ -184,7 +179,8 @@ class _PaginatorBase:
     async def paginate_message(self) -> Optional[Message]:
         """|coro|
         
-        Привязывает Paginator к конкретному сообщению, либо отправляет новое."""
+        Привязывает Paginator к конкретному сообщению, либо отправляет новое.
+        """
         if self.initial_embed:
             embed = self.initial_embed
         else:
@@ -194,19 +190,43 @@ class _PaginatorBase:
             message = await self.message.edit(embed=embed)
         else:
             message = await self.ctx.send(embed=embed)
+
         await self._add_reactions(*self.emojis, message=message)
         self.message = message
         
         return message
-
+    
     async def pagination(self, emoji: str) -> None:
         """|coro|
         
         Отвечает за действие, при нажатии реакции под сообщением.
         
-        Переопределите метод в наследуемом классе.
+        Parameters
+        ----------
+        emoji: :class:`str`
+            Эмодзи, полученное нажатием реакции.
         """
-        return None
+        category_count = self._count - 1
+
+        category = self._get_page(self.category)
+        page_count = len(self.pages[category]) - 1
+
+        if emoji == self.emojis[0] and 0 < self.category:
+            self.current = 0
+            self.category -= 1
+
+        elif emoji == self.emojis[1] and 0 < self.current:
+            self.current -= 1
+
+        elif emoji == self.emojis[2]:
+            await self.stop()
+
+        elif emoji == self.emojis[3] and self.current < page_count:
+            self.current += 1
+
+        elif emoji == self.emojis[4] and self.category < category_count:
+            self.current = 0
+            self.category += 1
 
     async def generate_embed(self) -> Embed:
         """|coro|
@@ -214,7 +234,8 @@ class _PaginatorBase:
         Генерирует и возвращает Embed в зависимости от текущей страницы
         и предпочтений.
         
-        Переопределите метод в наследуемом классе."""
+        Переопределите метод в наследуемом классе.
+        """
         return Embed()
 
 
@@ -249,8 +270,6 @@ class TextPaginator(_PaginatorBase):
         Добавляет готовый Embed к Paginator.
     add_from_dict(data)
         Добавляет категорию(-и) через словарь.
-    pagination(emoji)
-        Отвечает за действие, при нажатии реакции под сообщением.
     generate_embed()
         Генерирует и возвращает Embed в зависимости от текущей страницы.
     """
@@ -258,23 +277,20 @@ class TextPaginator(_PaginatorBase):
         self.max_size: int = kwargs.pop("max_size", 2000)
         self.separator: str = kwargs.pop("separator", "\n")
 
-        self.category = 0
-        self.none_types = (None, False, "", Embed.Empty)
-
         super().__init__(*args, **kwargs)
 
     def __repr__(self) -> str:
-        f = " max_size: {0.max_size} separator: `{0.separator}`"
+        f = " max_size: {0.max_size} separator: {0.separator}"
         return super().__repr__() + f.format(self)
     
     def cut_text(self, category: tuple, text: str) -> None:
-        """Разделяет текст на части, не превышающие максимальное 
-        количество символов, после добавляет страницу к указанной категории.
+        """Разделяет текст на страницы.
         
         Parameters
         ----------
         category: :class:`tuple`
-            Кортеж в формате: `заголовок`, `футер`, `порядковый номер`
+            Ключ-категория в формате: 
+            (title: :class:`str`, footer: :class:`str`, count: :class:`int`)
         text: :clas:`str`
             Текст, для дальнейшего разделения на части.
         """
@@ -321,24 +337,14 @@ class TextPaginator(_PaginatorBase):
         embed: :class:`Embed`
             Сгенерированный Embed.
         """
-        data = []
-
-        if embed.title:
-            data.append(embed.title)
-        else:
-            if embed.description in self.none_types:
-                raise KeyError(
-                    "Оба значения title и description не могут быть равны None.")
-
-            data.append(Embed.Empty)
-        
         if embed.footer:
-            data.append(embed.footer.text)
+            footer = embed.footer.text
         else:
-            data.append(Embed.Empty)
-        
-        data.append(self._count)
-        self.pages[tuple(data)] = [embed.description]
+            footer = embed.footer
+
+        key = (embed.title, footer, self._count)
+        self.pages[key] = list()
+        self.cut_text(key, embed.description)
     
     def add_from_dict(self, data: dict) -> None:
         """Добавляет категорию(-и) через словарь.
@@ -356,62 +362,138 @@ class TextPaginator(_PaginatorBase):
         })
         """
         for category, texts in data.items():
-            category = list(category) + [self._count]
-
-            category[0] = category[0] or Embed.Empty
-            category[1] = category[1] or Embed.Empty
-            
-            if len(texts) == 0 or texts[0] in self.none_types:
-                texts.append(Embed.Empty)
-
-                if category[0] in self.none_types:
-                    raise KeyError(
-                        "Оба значения title и description не могут быть равны None.")
-
-            self.pages[tuple(category)] = texts
-    
-    async def pagination(self, emoji: str) -> None:
-        """|coro|
-        
-        Отвечает за действие, при нажатии реакции под сообщением.
-        
-        Parameters
-        ----------
-        emoji: :class:`str`
-            Эмодзи, полученное нажатием реакции.
-        """
-        category_count = self._count - 1
-        page_count = len(self.pages[self._get_page(self.category)]) - 1
-
-        if emoji == self.emojis[0] and 0 < self.category:
-            self.current = 0
-            self.category -= 1
-
-        elif emoji == self.emojis[1] and 0 < self.current:
-            self.current -= 1
-
-        elif emoji == self.emojis[2]:
-            await self.stop()
-
-        elif emoji == self.emojis[3] and self.current < page_count:
-            self.current += 1
-
-        elif emoji == self.emojis[4] and self.category < category_count:
-            self.current = 0
-            self.category += 1
+            key = tuple(list(category) + [self._count])
+            self.pages[key] = texts
         
     async def generate_embed(self) -> Embed:
         """|coro|
         
-        Генерирует и возвращает Embed в зависимости от текущей страницы."""
+        Генерирует и возвращает Embed в зависимости от текущей страницы.
+        """
         key = self._get_page(self.category)
         page = self.pages[key]
         
         embed = Embed(title=key[0], description=page[self.current])
         embed.set_footer(text=key[1])
+
         return embed
         
+        
 class FieldPaginator(_PaginatorBase):
-    """Незаконченный класс. Сделаю, когда вернусь."""
-    def __init__(self, **kwargs) -> None:
+    """Paginator позволяющий переключаться между Fields.
+    
+    Parameters [kwargs]
+    ----------
+    max_count: :class:`int`
+        Максимальное количество Fields на страницу.
+    
+    Methods
+    -------
+    split_fields(category, fields)
+        Разделяет Fields на страницы.
+    add_category(*fields, title, footer)
+        Добавляет категорию к Paginator.
+    add_embed(embed)
+        Добавляет готовый Embed к Paginator.
+    add_from_dict(data)
+        Добавляет категорию(-и) через словарь.
+    generate_embed()
+        Генерирует и возвращает Embed в зависимости от текущей страницы.
+    """
+    def __init__(self, *args, **kwargs) -> None:
         self.max_count: int = kwargs.pop("max_count", 25)
+
+        super().__init__(*args, **kwargs)
+
+    def __repr__(self) -> str:
+        f = " max_count: {0.max_count}"
+        return super().__repr__() + f.format(self)
+
+    def split_fields(self, category: tuple, fields: list):
+        """Разделяет Fields на страницы.
+
+        Parameters
+        ----------
+        category: :class:`tuple`
+            Ключ-категория в формате: 
+            (title: :class:`str`, footer: :class:`str`, count: :class:`int`)
+        fields: :class:`list`
+            Список из Field для разделения.
+        """
+        limit = self.max_count
+        separated = tuple(fields[:limit])
+
+        self.pages[category].append([separated])
+        if len(fields[limit:]) > self.max_count:
+            self.split_fields(category, fields)
+    
+    def add_category(self,
+        *fields, 
+        title: Union[str, _EmptyEmbed] = Embed.Empty,
+        footer: Union[str, _EmptyEmbed] = Embed.Empty
+    ) -> None:
+        """Добавляет категорию к Paginator.
+        
+        Parameters
+        ----------
+        *fields: :class:`tuple` 
+            Fields в формате: 
+            (name: :class:`str`, value: :class:`str`, inline: :class:`bool`)
+        title: Union[:class:`str`, :class:`_EmptyEmbed`]
+            Заголовок для Embed. По умолчанию - пустой.
+        footer: Union[:class:`str`, :class:`_EmptyEmbed`]
+            Футер для Embed. По умолчанию - пустой.
+        """
+        key = (title, footer, self._count)
+        self.pages[key] = list()
+        self.split_fields(title, list(fields))
+
+    def add_embed(self, embed: Embed) -> None:
+        """Добавляет готовый Embed к Paginator.
+        
+        Parameters
+        ----------
+        embed: :class:`Embed`
+            Сгенерированный Embed.
+        """
+        if embed.footer:
+            footer = embed.footer.text
+        else:
+            footer = embed.footer
+
+        key = (embed.title, footer, self._count)
+        self.pages[key] = list()
+        self.split_fields(key, embed.fields)
+    
+    def add_from_dict(self, data: dict) -> None:
+        """Добавляет категорию(-и) через словарь.
+        
+        Parameters
+        ----------
+        data: :class:`dict`
+            Данные в формате: 
+            (title: :class:`str`, footer: :class:`str`): [
+                (name: :class:`str`, value: :class:`str`, inline: :class:`bool`),
+            ]
+        """
+        for category, fields in data.items():
+            key = tuple(list(category) + [self._count])
+
+            self.pages[key] = list()
+            self.split_fields(key, fields)
+    
+    async def generate_embed(self) -> Embed:
+        """|coro|
+
+        Генерирует и возвращает Embed в зависимости от текущей страницы.
+        """
+        key = self._get_page(self.category)
+        page = self.pages[key]
+        
+        embed = Embed(title=key[0])
+        embed.set_footer(text=key[1])
+
+        for field in self.page[self.current]:
+            embed.add_field(name=field[0], value=field[1], inline=field[2])
+        
+        return embed
