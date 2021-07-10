@@ -448,7 +448,7 @@ class FieldPaginator(_PaginatorBase):
         """
         key = (title, footer, self._count)
         self.pages[key] = list()
-        self.split_fields(title, list(fields))
+        self.split_fields(key, list(fields))
 
     def add_embed(self, embed: Embed) -> None:
         """Добавляет готовый Embed к Paginator.
