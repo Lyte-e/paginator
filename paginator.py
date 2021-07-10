@@ -88,7 +88,8 @@ class _PaginatorBase:
         self.is_active = False
         
     def __repr__(self) -> str:
-        f = "<{0.__class__.__name__} count: {0._count} current: {0.current}"
+        f = "<{0.__class__.__name__} count: {0._count} category: {0.category}" \
+            " current: {0.current} is_active: {0.is_active}>"
         return f.format(self)
     
     def __len__(self) -> int:
@@ -254,7 +255,7 @@ class TextPaginator(_PaginatorBase):
     max_size: :class:`int`
         Максимальное количество символов в описании Embed. По умолчанию - 2000.
     separator: :class:`str`
-        Символ, для разделения текста на части. По умолчанию - новая строка (\n).
+        Символ, для разделения текста на части. По умолчанию - новая строка (`\n`).
 
     Methods
     -------
@@ -280,8 +281,8 @@ class TextPaginator(_PaginatorBase):
         super().__init__(*args, **kwargs)
 
     def __repr__(self) -> str:
-        f = " max_size: {0.max_size} separator: {0.separator}"
-        return super().__repr__() + f.format(self)
+        f = " max_size: {0.max_size} separator: {0.separator}>"
+        return super().__repr__()[:-1] + f.format(self)
     
     def cut_text(self, category: tuple, text: str) -> None:
         """Разделяет текст на страницы.
@@ -372,13 +373,14 @@ class TextPaginator(_PaginatorBase):
         """
         key = self._get_page(self.category)
         page = self.pages[key]
+        e = Embed.Empty
         
-        embed = Embed(title=key[0], description=page[self.current])
-        embed.set_footer(text=key[1])
+        embed = Embed(title=key[0] or e, description=page[self.current] or e)
+        embed.set_footer(text=key[1] or e)
 
         return embed
         
-        
+
 class FieldPaginator(_PaginatorBase):
     """Paginator позволяющий переключаться между Fields.
     
@@ -407,7 +409,7 @@ class FieldPaginator(_PaginatorBase):
 
     def __repr__(self) -> str:
         f = " max_count: {0.max_count}"
-        return super().__repr__() + f.format(self)
+        return super().__repr__()[:-1] + f.format(self)
 
     def split_fields(self, category: tuple, fields: list):
         """Разделяет Fields на страницы.
@@ -489,9 +491,10 @@ class FieldPaginator(_PaginatorBase):
         """
         key = self._get_page(self.category)
         page = self.pages[key]
+        e = Embed.Empty
         
-        embed = Embed(title=key[0])
-        embed.set_footer(text=key[1])
+        embed = Embed(title=key[0] or e)
+        embed.set_footer(text=key[1] or e)
 
         for field in self.page[self.current]:
             embed.add_field(name=field[0], value=field[1], inline=field[2])
